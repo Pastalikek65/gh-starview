@@ -146,6 +146,65 @@ func TestRun_ContextTimeout(t *testing.T) {
 	}
 }
 
+func TestResolveToken_Precedence(t *testing.T) {
+	// GITHUB_TOKEN precedence over GH_TOKEN and gh auth
+	t.Setenv("GITHUB_TOKEN", "ghp_from_github_token")
+	t.Setenv("GH_TOKEN", "ghp_from_gh_token")
+	if got := resolveToken(); got != "ghp_from_github_token" {
+		t.Fatalf("want GITHUB_TOKEN, got %q", got)
+	}
+	// GH_TOKEN when GITHUB_TOKEN empty
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "ghp_from_gh_token2")
+	if got := resolveToken(); got != "ghp_from_gh_token2" {
+		t.Fatalf("want GH_TOKEN, got %q", got)
+	}
+	// fallback to gh auth token via fake gh
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	dir := t.TempDir()
+	ghPath := dir + "/gh"
+	os.WriteFile(ghPath, []byte("#!/bin/sh\necho fake-gh-token\n"), 0755)
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir+":"+oldPath)
+	if got := resolveToken(); got != "fake-gh-token" {
+		t.Fatalf("want fake-gh-token, got %q", got)
+	}
+}
+
+func TestDetectUser_WithFakeGh(t *testing.T) {
+	dir := t.TempDir()
+	ghPath := dir + "/gh"
+	// fake gh that handles "auth token" and "api user --jq .login"
+	os.WriteFile(ghPath, []byte("#!/bin/sh\nif echo \"$@\" | grep -q \"api user\"; then echo \"fakeuser\"; else echo \"fake-token\"; fi\n"), 0755)
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir+":"+oldPath)
+	if got := detectUser(); got != "fakeuser" {
+		t.Fatalf("want fakeuser, got %q", got)
+	}
+}
+
+func TestTruncateAndPrintPlain(t *testing.T) {
+	if got := truncate("hello world", 5); got != "he..." {
+		t.Fatalf("truncate want he... got %q", got)
+	}
+	if got := truncate("hi", 10); got != "hi" {
+		t.Fatalf("truncate short want hi got %q", got)
+	}
+	// printPlain should write table, capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	printPlain([]cache.Repo{{Name: "test", Language: "Go", Stars: 5, Forks: 1, UpdatedAt: "2026-01-01T00:00:00Z"}}, "stars")
+	w.Close()
+	os.Stdout = oldStdout
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	if !contains(buf.String(), "test") {
+		t.Fatalf("printPlain should contain test, got %q", buf.String())
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i <= len(s)-len(sub); i++ {
 		if s[i:i+len(sub)] == sub {
