@@ -21,6 +21,8 @@ jobs:
         run: go vet ./...
       - name: test with coverage
         run: go test ./... -count=1 -timeout 30s -coverprofile=coverage.out
+      - name: race
+        run: go test -race ./... -count=1 -timeout 60s
       - name: coverage check
         run: |
           go tool cover -func=coverage.out | tail -5
