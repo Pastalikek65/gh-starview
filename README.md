@@ -1,17 +1,15 @@
 # gh-starview
 
-[![Go 1.24](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go)](https://go.dev)
+[![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
 [![gh extension](https://img.shields.io/badge/gh-extension-24292F?logo=github)](https://cli.github.com/manual/gh_extension)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Termux](https://img.shields.io/badge/Termux-friendly-brightgreen?logo=android)](https://termux.dev)
 
-**TUI for GitHub repo metrics — `gh` CLI extension with offline SQLite cache.**
-
-`gh starview` lists your repos in a sortable terminal table (stars / forks / updated) — built for **Termux Debian** on phone: single binary <15MB, <40MB RAM, `CGO=0`, `modernc.org/sqlite` WAL cache, `go build` 4s.
+I built `gh-starview` on my phone in Termux because `gh repo list` was unreadable. You get a scrollable table you can sort and filter without leaving the terminal. It caches to SQLite so it works on the subway.
 
 ```bash
 gh extension install Pastalikek65/gh-starview
-gh starview                      # your repos (auto-detected via gh auth)
+gh starview                      # your repos, auto-detected
 gh starview Pastalikek65 --sort stars
 gh starview --sort updated --limit 10
 gh starview --json | jq '.[].Name'
@@ -19,101 +17,100 @@ gh starview --json | jq '.[].Name'
 
 ![demo](https://raw.githubusercontent.com/Pastalikek65/gh-starview/main/demo.gif)
 
-> **Phone-friendly:** no Docker, no daemon, single `~/.cache/gh-starview/gh-starview.db` file. Works offline after first fetch.
+Single file cache at `~/.cache/gh-starview/gh-starview.db`. No Docker. No daemon. First fetch needs network, after that airplane mode shows your last data.
 
-## Why
+## What you get
 
-`gh repo list` is plain text — you can't see at a glance which README is weak or which repo needs archiving. `gh-starview` gives you:
+`gh repo list` prints plain text. You cannot tell which repo needs a better README. This helps you see it:
 
-- **Sortable TUI** (`bubbletea` + `lipgloss`): `s` stars, `n` name, `f` forks, `u` updated, `j/k` navigate, `q` quit
-- **Offline cache:** SQLite WAL (`modernc.org/sqlite`, pure Go, no CGO) — airplane mode still shows last fetch
-- **Plain fallback:** auto-detects non-TTY (CI, `GH_STARVIEW_PLAIN=1`) → prints lipgloss table without TUI
-- **JSON mode:** `gh starview --json` for scripting
+- Press `s` for stars, `n` for name, `f` for forks, `u` for updated. `j/k` to move, `q` to quit.
+- Press `/`, type a name, hit `enter` to filter. `esc` clears it.
+- It detects when you are not in a TTY. In CI it prints a plain table. Set `GH_STARVIEW_PLAIN=1` to force it.
+- Need JSON? `gh starview --json` pipes to `jq`.
 
 ## Install
 
-### As `gh` extension (recommended)
+**As a gh extension**
 
 ```bash
 gh extension install Pastalikek65/gh-starview
 gh starview --help
 ```
 
-### From source (Termux / Debian)
+**From source on Termux or Debian**
 
 ```bash
 git clone https://github.com/Pastalikek65/gh-starview.git
 cd gh-starview
 go build -ldflags="-s -w" -o gh-starview .
 ./gh-starview --help
-# optional: install as extension locally
-gh extension install .
+gh extension install .   # local
 ```
 
-### `go install`
+**With go install**
 
 ```bash
 go install github.com/Pastalikek65/gh-starview@latest
 gh-starview Pastalikek65 --sort stars
 ```
 
-## Usage
+## How to use it
 
 ```bash
-# your account (detected via `gh api user`)
+# your account
 gh starview
 gh starview --sort stars      # default
 gh starview --sort name
 gh starview --sort forks
 gh starview --sort updated
 
-# any user
+# someone else
 gh starview torvalds --limit 5
 gh starview --json --limit 20 | jq
 
-# bypass cache (force fetch)
+# skip cache
 gh starview --no-cache
 
-# offline — uses cache, shows ⚠️ warning on stderr
-# (after first successful fetch)
+# offline: shows a warning and your cached data
 ```
 
-**Keys in TUI:** `↑/k` `↓/j` navigate · `s` stars · `n` name · `f` forks · `u` updated · `/` filter (type + enter) · `esc` clear filter · `q` quit
+Keys: `↑/k` `↓/j` · `s` stars · `n` name · `f` forks · `u` updated · `/` filter · `esc` clear · `q` quit
 
-**Cache:** `~/.cache/gh-starview/gh-starview.db` (or `$XDG_CACHE_HOME/gh-starview/...`). `PRAGMA journal_mode=WAL` `0700`. Works offline — shows `⚠️  rate limited — showing cached data` on stderr and serves stale cache.
+Cache lives at `~/.cache/gh-starview/gh-starview.db` (or `XDG_CACHE_HOME`). It uses `WAL` and `0700`. If you hit a rate limit you still see your cached data and a `⚠️ rate limited` warning.
 
-**Security:** token precedence `GITHUB_TOKEN` > `GH_TOKEN` > `gh auth token` (2s timeout), never logged, `User-Agent: gh-starview/<version>`.
+Tokens: I check `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token` with a 2 second timeout. I never log your token. User agent is `gh-starview/<version>`.
 
-**Shell completion:** `gh-starview completion bash|zsh|fish`
+Completion: `gh-starview completion bash|zsh|fish`
 
-## Tech
+## How it works
 
-- **Go 1.24**, `cobra`, `bubbletea` `v1.3.4`, `lipgloss` `v1.1.0`, `modernc.org/sqlite` `v1.38.2` (pure Go, no CGO, `CGO_ENABLED=0`, `trimpath`, `0700` cache)
-- Data flow: `github.Client.ListRepos` (Link header pagination, `PathEscape`, 10s timeout) → `cache.Store.Upsert` (url PK) → `tui.Model` (filter + sort)
-- API: `GET /users/:user/repos?per_page=100&sort=updated` (REST, Link `rel="next"` pagination)
-- Rate-limit: `429` + `403` with `X-RateLimit-Remaining` → `ErrRateLimited`, shows cached data
+Go 1.25, `cobra`, `bubbletea` 1.3.4, `lipgloss` 1.1.0, `modernc.org/sqlite` 1.38.2. No CGO, so it builds on Termux. I run `CGO_ENABLED=0` and `trimpath`.
 
-## Development
+The flow is simple: `github.Client.ListRepos` handles pagination through the `Link` header and escapes the username, then `cache.Store` writes to SQLite with `url` as primary key, then `tui.Model` sorts and filters.
+
+API call: `GET /users/:user/repos?per_page=100&sort=updated`. Rate limits: I treat `429` and `403` with `X-RateLimit-Remaining: 0` as `ErrRateLimited` and fall back to cache.
+
+## Developing it
 
 ```bash
-make test   # go test ./... -count=1 -timeout 30s -cover
-make cover  # coverage 69.6% total, 90% tui, 88% github
-make vet    # go vet + golangci-lint
-make build  # CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$(git describe)"
-./gh-starview --version # v0.1.0-5-g2aa93eb
+make test   # all packages, 69.6% total
+make cover  # detailed coverage, 90% for tui
+make vet    # vet plus golangci-lint if you have it
+make build  # 13M binary, 4s on my phone
+./gh-starview --version # v0.2.1
 ```
 
-**Tests:** `internal/cache` (WAL, url PK, migration) · `internal/github` (httptest + pagination + PathEscape + 429) · `internal/tui` (filter `/` + 90.4%) · `main` (integration with mock server + offline fallback) — all <200ms.
+Tests use `t.TempDir()` for SQLite and `httptest` for GitHub. No TTY needed. The `main` package has integration tests with a mock server and an offline fallback check.
 
-## Roadmap
+## What's next
 
-- [x] Pagination (>100 repos) via `Link` header — done
-- [x] Interactive filter `/` + `esc` — done
-- [ ] `--fork` filter toggle, language filter
-- [ ] Stars sparkline (history via GraphQL)
-- [ ] `gh starview --private` (needs `repo` scope, uses `/user/repos`)
-- [ ] `goreleaser` cross-build (android/linux/darwin) + checksums — done
+- [x] Pagination for more than 100 repos
+- [x] Filter with `/`
+- [x] Cross builds for android, linux, darwin with goreleaser
+- [ ] Filter by fork and language
+- [ ] Sparkline for stars history
+- [ ] `gh starview --private` for private repos
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT — see [LICENSE](LICENSE). Built on a phone, tested on a phone.
