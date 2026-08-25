@@ -2,6 +2,7 @@ package cache
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -30,29 +31,49 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
 		return nil, err
 	}
-	// check existing schema and migrate if needed (old PK was name)
+	// check existing schema and migrate non-destructively if needed (old PK was name)
 	var sqlText string
 	err = db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='repos'`).Scan(&sqlText)
-	if err == nil {
-		// table exists, check if url is PK
-		if !strings.Contains(sqlText, "url TEXT PRIMARY KEY") {
-			// migrate: drop and recreate
-			if _, err := db.Exec(`DROP TABLE repos`); err != nil {
-				return nil, err
-			}
+	if err == nil && !strings.Contains(sqlText, "url TEXT PRIMARY KEY") {
+		// non-destructive migration: create new table, copy, drop old, rename
+		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS repos_new (
+			name TEXT,
+			description TEXT,
+			language TEXT,
+			stars INT,
+			forks INT,
+			updated_at TEXT,
+			is_fork INT,
+			url TEXT PRIMARY KEY
+		)`); err != nil {
+			return nil, err
 		}
-	}
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS repos (
-		name TEXT,
-		description TEXT,
-		language TEXT,
-		stars INT,
-		forks INT,
-		updated_at TEXT,
-		is_fork INT,
-		url TEXT PRIMARY KEY
-	)`); err != nil {
-		return nil, err
+		// copy with synthetic url for empty urls
+		if _, err := db.Exec(`INSERT OR IGNORE INTO repos_new(name,description,language,stars,forks,updated_at,is_fork,url)
+			SELECT name,description,language,stars,forks,updated_at,is_fork,
+			       COALESCE(NULLIF(url,''), 'https://github.com/_/' || name) FROM repos`); err != nil {
+			return nil, err
+		}
+		if _, err := db.Exec(`DROP TABLE repos`); err != nil {
+			return nil, err
+		}
+		if _, err := db.Exec(`ALTER TABLE repos_new RENAME TO repos`); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		// no existing table, create new
+		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS repos (
+			name TEXT,
+			description TEXT,
+			language TEXT,
+			stars INT,
+			forks INT,
+			updated_at TEXT,
+			is_fork INT,
+			url TEXT PRIMARY KEY
+		)`); err != nil {
+			return nil, err
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -91,14 +112,18 @@ func (s *Store) Upsert(repos []Repo) error {
 }
 
 func (s *Store) List(sortBy string) ([]Repo, error) {
-	order := "stars DESC"
+	var order string
 	switch sortBy {
+	case "stars", "":
+		order = "stars DESC"
 	case "name":
 		order = "name ASC"
 	case "updated":
 		order = "updated_at DESC"
 	case "forks":
 		order = "forks DESC"
+	default:
+		return nil, fmt.Errorf("invalid sortBy %q: must be stars|name|forks|updated", sortBy)
 	}
 	rows, err := s.db.Query(`SELECT name,description,language,stars,forks,updated_at,is_fork,url FROM repos ORDER BY ` + order)
 	if err != nil {

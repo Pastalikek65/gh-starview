@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/Pastalikek65/gh-starview/internal/cache"
+	"github.com/Pastalikek65/gh-starview/internal/util"
 )
 
 func TestModelSort(t *testing.T) {
@@ -196,12 +197,12 @@ func TestViewStates(t *testing.T) {
 	if !contains(v, "no match") {
 		t.Fatalf("want no match, got %q", v)
 	}
-	// truncate
-	if truncate("hello world", 5) != "he..." {
-		t.Fatal("truncate failed")
+	// truncate via util (rune-aware)
+	if util.Truncate("hello world", 5) != "he..." {
+		t.Fatalf("truncate want he... got %q", util.Truncate("hello world", 5))
 	}
-	if truncate("hi", 10) != "hi" {
-		t.Fatal("truncate short failed")
+	if util.Truncate("hi", 10) != "hi" {
+		t.Fatalf("truncate short want hi got %q", util.Truncate("hi", 10))
 	}
 }
 

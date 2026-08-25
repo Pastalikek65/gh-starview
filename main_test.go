@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Pastalikek65/gh-starview/internal/cache"
+	"github.com/Pastalikek65/gh-starview/internal/util"
 )
 
 func TestRun_InvalidSortAndLimit(t *testing.T) {
@@ -185,10 +186,10 @@ func TestDetectUser_WithFakeGh(t *testing.T) {
 }
 
 func TestTruncateAndPrintPlain(t *testing.T) {
-	if got := truncate("hello world", 5); got != "he..." {
+	if got := util.Truncate("hello world", 5); got != "he..." {
 		t.Fatalf("truncate want he... got %q", got)
 	}
-	if got := truncate("hi", 10); got != "hi" {
+	if got := util.Truncate("hi", 10); got != "hi" {
 		t.Fatalf("truncate short want hi got %q", got)
 	}
 	// printPlain should write table, capture stdout

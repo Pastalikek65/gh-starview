@@ -4,10 +4,21 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/Pastalikek65/gh-starview/internal/cache"
+	"github.com/Pastalikek65/gh-starview/internal/util"
+)
+
+var (
+	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).Padding(0, 1)
+	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("240"))
+	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	normalStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	filterStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	faintStyle    = lipgloss.NewStyle().Faint(true)
 )
 
 type Model struct {
@@ -75,78 +86,78 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		key := msg.String()
-		// filtering mode
 		if m.filtering {
-			switch key {
-			case "enter":
-				m.filter = m.filterInput
-				m.filtering = false
-				m.filterInput = ""
-				m.apply()
-				return m, nil
-			case "esc", "ctrl+c":
-				m.filtering = false
-				m.filterInput = ""
-				return m, nil
-			case "backspace", "ctrl+h":
-				if len(m.filterInput) > 0 {
-					m.filterInput = m.filterInput[:len(m.filterInput)-1]
-				}
-				return m, nil
-			case "ctrl+u":
-				m.filterInput = ""
-				return m, nil
-			default:
-				// printable single char
-				if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {
-					m.filterInput += key
-					return m, nil
-				}
-				// ignore other keys while filtering
-				return m, nil
-			}
+			return m.updateFiltering(key)
 		}
-		// normal mode
-		switch key {
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.filtered)-1 {
-				m.cursor++
-			}
-		case "s":
-			m.SortBy("stars")
-		case "n":
-			m.SortBy("name")
-		case "f":
-			m.SortBy("forks")
-		case "u":
-			m.SortBy("updated")
-		case "/":
-			m.filtering = true
-			m.filterInput = ""
-			return m, nil
-		case "esc":
-			// clear filter if set
-			if m.filter != "" {
-				m.Filter("")
-			}
-		}
+		return m.updateNormal(key)
 	}
 	return m, nil
 }
 
-func (m Model) View() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).Padding(0, 1)
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("240"))
-	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	normalStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	filterStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+func (m *Model) updateFiltering(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "enter":
+		m.filter = m.filterInput
+		m.filtering = false
+		m.filterInput = ""
+		m.apply()
+		return *m, nil
+	case "esc", "ctrl+c":
+		m.filtering = false
+		m.filterInput = ""
+		return *m, nil
+	case "backspace", "ctrl+h":
+		if len(m.filterInput) > 0 {
+			// rune-safe backspace
+			_, size := utf8.DecodeLastRuneInString(m.filterInput)
+			m.filterInput = m.filterInput[:len(m.filterInput)-size]
+		}
+		return *m, nil
+	case "ctrl+u":
+		m.filterInput = ""
+		return *m, nil
+	default:
+		if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {
+			m.filterInput += key
+			return *m, nil
+		}
+		return *m, nil
+	}
+}
 
+func (m *Model) updateNormal(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "q", "ctrl+c":
+		return *m, tea.Quit
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < len(m.filtered)-1 {
+			m.cursor++
+		}
+	case "s":
+		m.SortBy("stars")
+	case "n":
+		m.SortBy("name")
+	case "f":
+		m.SortBy("forks")
+	case "u":
+		m.SortBy("updated")
+	case "/":
+		m.filtering = true
+		m.filterInput = ""
+		return *m, nil
+	case "esc":
+		if m.filter != "" {
+			m.Filter("")
+		}
+	}
+	return *m, nil
+}
+
+func (m Model) View() string {
 	s := titleStyle.Render(" gh-starview ") + "\n"
 	s += headerStyle.Render(fmt.Sprintf(" %-28s %-10s %4s %4s  %-19s ", "NAME", "LANG", "★", "FORK", "UPDATED")) + "\n"
 	s += strings.Repeat("─", 72) + "\n"
@@ -158,29 +169,18 @@ func (m Model) View() string {
 		}
 	}
 	for i, r := range m.filtered {
-		line := fmt.Sprintf(" %-28s %-10s %4d %4d  %-19s", truncate(r.Name, 28), truncate(r.Language, 10), r.Stars, r.Forks, truncate(r.UpdatedAt, 19))
+		line := fmt.Sprintf(" %-28s %-10s %4d %4d  %-19s", util.Truncate(r.Name, 28), util.Truncate(r.Language, 10), r.Stars, r.Forks, util.Truncate(r.UpdatedAt, 19))
 		if i == m.cursor {
 			s += selectedStyle.Render("▶"+line) + "\n"
 		} else {
 			s += normalStyle.Render(" "+line) + "\n"
 		}
 	}
-	// filter input line
 	if m.filtering {
-		s += "\n" + filterStyle.Render(fmt.Sprintf("/%s█", m.filterInput)) + lipgloss.NewStyle().Faint(true).Render(" (enter:apply  esc:cancel)") + "\n"
+		s += "\n" + filterStyle.Render(fmt.Sprintf("/%s█", m.filterInput)) + faintStyle.Render(" (enter:apply  esc:cancel)") + "\n"
 	} else if m.filter != "" {
-		s += "\n" + lipgloss.NewStyle().Faint(true).Render(fmt.Sprintf("filter: %q  (/ to change, esc to clear)", m.filter)) + "\n"
+		s += "\n" + faintStyle.Render(fmt.Sprintf("filter: %q  (/ to change, esc to clear)", m.filter)) + "\n"
 	}
-	s += "\n" + lipgloss.NewStyle().Faint(true).Render("q:quit  s:stars  n:name  f:forks  u:updated  j/k:nav  /:filter") + "\n"
+	s += "\n" + faintStyle.Render("q:quit  s:stars  n:name  f:forks  u:updated  j/k:nav  /:filter") + "\n"
 	return s
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	if n <= 3 {
-		return s[:n]
-	}
-	return s[:n-3] + "..."
 }
