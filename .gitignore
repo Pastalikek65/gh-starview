@@ -5,3 +5,7 @@ gh-starview-android-*
 .cache/
 dist/
 vendor/
+coverage.out
+*.out
+*.test
+*.prof
