@@ -37,7 +37,7 @@ jobs:
           GH_STARVIEW_PLAIN: "1"
         run: ./gh-starview --json --limit 2 | head -20
       - name: lint (optional)
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v1.64
           args: --timeout=2m
