@@ -13,6 +13,9 @@ func CacheDir() string {
 	if home == "" {
 		home = os.Getenv("HOME")
 	}
+	if home == "" {
+		return filepath.Join(os.TempDir(), "gh-starview")
+	}
 	return filepath.Join(home, ".cache", "gh-starview")
 }
 
@@ -21,5 +24,5 @@ func CacheDBPath() string {
 }
 
 func EnsureCacheDir() error {
-	return os.MkdirAll(CacheDir(), 0755)
+	return os.MkdirAll(CacheDir(), 0700)
 }

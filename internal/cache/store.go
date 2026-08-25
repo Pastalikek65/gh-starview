@@ -2,6 +2,7 @@ package cache
 
 import (
 	"database/sql"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -29,15 +30,27 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
 		return nil, err
 	}
+	// check existing schema and migrate if needed (old PK was name)
+	var sqlText string
+	err = db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='repos'`).Scan(&sqlText)
+	if err == nil {
+		// table exists, check if url is PK
+		if !strings.Contains(sqlText, "url TEXT PRIMARY KEY") {
+			// migrate: drop and recreate
+			if _, err := db.Exec(`DROP TABLE repos`); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS repos (
-		name TEXT PRIMARY KEY,
+		name TEXT,
 		description TEXT,
 		language TEXT,
 		stars INT,
 		forks INT,
 		updated_at TEXT,
 		is_fork INT,
-		url TEXT
+		url TEXT PRIMARY KEY
 	)`); err != nil {
 		return nil, err
 	}
@@ -60,12 +73,21 @@ func (s *Store) Upsert(repos []Repo) error {
 		if r.IsFork {
 			isFork = 1
 		}
-		if _, err := stmt.Exec(r.Name, r.Description, r.Language, r.Stars, r.Forks, r.UpdatedAt, isFork, r.URL); err != nil {
+		url := r.URL
+		if url == "" {
+			// fallback for tests without URL: use synthetic URL based on name
+			url = "https://github.com/_/" + r.Name
+		}
+		if _, err := stmt.Exec(r.Name, r.Description, r.Language, r.Stars, r.Forks, r.UpdatedAt, isFork, url); err != nil {
 			tx.Rollback()
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return nil
 }
 
 func (s *Store) List(sortBy string) ([]Repo, error) {
@@ -91,6 +113,10 @@ func (s *Store) List(sortBy string) ([]Repo, error) {
 			return nil, err
 		}
 		r.IsFork = isFork == 1
+		// hide synthetic url for tests
+		if strings.HasPrefix(r.URL, "https://github.com/_/") {
+			r.URL = ""
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()

@@ -74,37 +74,45 @@ gh starview --json --limit 20 | jq
 # bypass cache (force fetch)
 gh starview --no-cache
 
-# offline — uses cache, shows [offline] banner on stderr
+# offline — uses cache, shows ⚠️ warning on stderr
 # (after first successful fetch)
 ```
 
-**Keys in TUI:** `↑/k` `↓/j` navigate · `s` stars · `n` name · `f` forks · `u` updated · `q` quit
+**Keys in TUI:** `↑/k` `↓/j` navigate · `s` stars · `n` name · `f` forks · `u` updated · `/` filter (type + enter) · `esc` clear filter · `q` quit
 
-**Cache:** `~/.cache/gh-starview/gh-starview.db` (or `$XDG_CACHE_HOME/gh-starview/...`). `PRAGMA journal_mode=WAL`.
+**Cache:** `~/.cache/gh-starview/gh-starview.db` (or `$XDG_CACHE_HOME/gh-starview/...`). `PRAGMA journal_mode=WAL` `0700`. Works offline — shows `⚠️  rate limited — showing cached data` on stderr and serves stale cache.
+
+**Security:** token precedence `GITHUB_TOKEN` > `GH_TOKEN` > `gh auth token` (2s timeout), never logged, `User-Agent: gh-starview/<version>`.
+
+**Shell completion:** `gh-starview completion bash|zsh|fish`
 
 ## Tech
 
-- **Go 1.24**, `cobra`, `bubbletea` `v1.3.4`, `lipgloss` `v1.1.0`, `modernc.org/sqlite` `v1.38.2` (pure Go, no CGO)
-- Data flow: `github.Client.ListRepos` → `cache.Store.Upsert` → `tui.Model`
-- API: `GET /users/:user/repos?per_page=100&sort=updated` (REST, paginated v1 = 100 repos)
-- Rate-limit handling: shows cached `[rate-limited]` banner instead of failing
+- **Go 1.24**, `cobra`, `bubbletea` `v1.3.4`, `lipgloss` `v1.1.0`, `modernc.org/sqlite` `v1.38.2` (pure Go, no CGO, `CGO_ENABLED=0`, `trimpath`, `0700` cache)
+- Data flow: `github.Client.ListRepos` (Link header pagination, `PathEscape`, 10s timeout) → `cache.Store.Upsert` (url PK) → `tui.Model` (filter + sort)
+- API: `GET /users/:user/repos?per_page=100&sort=updated` (REST, Link `rel="next"` pagination)
+- Rate-limit: `429` + `403` with `X-RateLimit-Remaining` → `ErrRateLimited`, shows cached data
 
 ## Development
 
 ```bash
-make test   # go test ./... -count=1 -timeout 30s
-make vet    # go vet ./...
-make build  # go build -ldflags="-s -w" -o gh-starview .
+make test   # go test ./... -count=1 -timeout 30s -cover
+make cover  # coverage 69.6% total, 90% tui, 88% github
+make vet    # go vet + golangci-lint
+make build  # CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$(git describe)"
+./gh-starview --version # v0.1.0-5-g2aa93eb
 ```
 
-**Tests:** `internal/cache` (WAL + sort) · `internal/github` (httptest mock + rate-limit) · `internal/tui` (sort/filter) — all <100ms.
+**Tests:** `internal/cache` (WAL, url PK, migration) · `internal/github` (httptest + pagination + PathEscape + 429) · `internal/tui` (filter `/` + 90.4%) · `main` (integration with mock server + offline fallback) — all <200ms.
 
 ## Roadmap
 
-- [ ] Pagination (>100 repos) via `Link` header
-- [ ] `--fork` filter toggle, language filter `/`
+- [x] Pagination (>100 repos) via `Link` header — done
+- [x] Interactive filter `/` + `esc` — done
+- [ ] `--fork` filter toggle, language filter
 - [ ] Stars sparkline (history via GraphQL)
 - [ ] `gh starview --private` (needs `repo` scope, uses `/user/repos`)
+- [ ] `goreleaser` cross-build (android/linux/darwin) + checksums — done
 
 ## License
 

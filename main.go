@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -49,10 +50,9 @@ as a sortable TUI table (stars/forks/updated) with offline SQLite cache.
 				user = args[0]
 			}
 			if user == "" {
-				// try gh api user
 				user = detectUser()
 				if user == "" {
-					user = "Pastalikek65"
+					return fmt.Errorf("no user specified and gh auth not found; run gh auth login or pass <user>")
 				}
 			}
 			return run(user, sortBy, noCache, jsonOut, limit)
@@ -82,8 +82,6 @@ as a sortable TUI table (stars/forks/updated) with offline SQLite cache.
 		// no args => default to starview
 		os.Args = []string{os.Args[0], "starview"}
 	}
-	// if called as root with flags but no subcommand, handle directly
-	// cobra will dispatch; if root is called without subcommand, run starview logic
 	root.RunE = func(cmd *cobra.Command, args []string) error {
 		user := ""
 		if len(args) == 1 {
@@ -92,7 +90,7 @@ as a sortable TUI table (stars/forks/updated) with offline SQLite cache.
 		if user == "" {
 			user = detectUser()
 			if user == "" {
-				user = "Pastalikek65"
+				return fmt.Errorf("no user specified and gh auth not found; run gh auth login or pass <user>")
 			}
 		}
 		return run(user, sortBy, noCache, jsonOut, limit)
@@ -104,6 +102,15 @@ as a sortable TUI table (stars/forks/updated) with offline SQLite cache.
 }
 
 func run(user, sortBy string, noCache, jsonOut bool, limit int) error {
+	// validate sort and limit
+	switch sortBy {
+	case "stars", "name", "forks", "updated":
+	default:
+		return fmt.Errorf("invalid --sort %q: must be stars|name|forks|updated", sortBy)
+	}
+	if limit < 1 || limit > 100 {
+		return fmt.Errorf("invalid --limit %d: must be 1-100", limit)
+	}
 	if err := config.EnsureCacheDir(); err != nil {
 		return fmt.Errorf("cache dir: %w", err)
 	}
@@ -113,21 +120,27 @@ func run(user, sortBy string, noCache, jsonOut bool, limit int) error {
 	}
 	defer store.Close()
 
-	// If not noCache and cache has data, we will use it as fallback or immediate
 	var repos []cache.Repo
 
 	if !noCache {
-		// try to show cached data quickly if network fails
-		cached, _ := store.List(sortBy)
-		if len(cached) > 0 {
+		cached, err := store.List(sortBy)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warn: cache read failed: %v\n", err)
+		} else if len(cached) > 0 {
 			repos = cached
 		}
 	}
 
-	// Fetch from GitHub
+	// Fetch from GitHub with timeout
 	token := resolveToken()
-	client := github.NewClient(token, "")
-	fetched, err := client.ListRepos(context.Background(), user)
+	if token == "" {
+		fmt.Fprintln(os.Stderr, "⚠️  no token found (set GITHUB_TOKEN or run gh auth login), using unauthenticated 60 req/hr")
+	}
+	baseURL := os.Getenv("GH_STARVIEW_API_URL")
+	client := github.NewClient(token, baseURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	fetched, err := client.ListRepos(ctx, user)
 	if err != nil {
 		if len(repos) > 0 {
 			fmt.Fprintf(os.Stderr, "⚠️  %v — showing cached data (%d repos)\n", err, len(repos))
@@ -138,16 +151,15 @@ func run(user, sortBy string, noCache, jsonOut bool, limit int) error {
 		if err := store.Upsert(fetched); err != nil {
 			fmt.Fprintf(os.Stderr, "warn: cache write failed: %v\n", err)
 		}
-		// re-read sorted from DB
-		sorted, _ := store.List(sortBy)
-		if len(sorted) > 0 {
+		sorted, err := store.List(sortBy)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warn: cache read failed: %v\n", err)
+			repos = fetched
+		} else if len(sorted) > 0 {
 			repos = sorted
 		} else {
 			repos = fetched
-			// sort in memory if DB empty
-			// use tui sort logic via store; but fetched is already unsorted, store sorts
 		}
-		// apply sort if needed (store already sorts, but ensure)
 		if len(repos) == 0 {
 			repos = fetched
 		}
@@ -208,8 +220,9 @@ func resolveToken() string {
 	if t := os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"); t != "" {
 		return t
 	}
-	// try gh auth token
-	out, err := exec.Command("gh", "auth", "token").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
 	if err == nil {
 		return strings.TrimSpace(string(out))
 	}
@@ -217,8 +230,9 @@ func resolveToken() string {
 }
 
 func detectUser() string {
-	// try gh api user --jq .login
-	out, err := exec.Command("gh", "api", "user", "--jq", ".login").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "gh", "api", "user", "--jq", ".login").Output()
 	if err == nil {
 		return strings.TrimSpace(string(out))
 	}

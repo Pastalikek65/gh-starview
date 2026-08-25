@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestListReposMockServer(t *testing.T) {
@@ -78,5 +79,82 @@ func TestNon200Error(t *testing.T) {
 	_, err := c.ListRepos(context.Background(), "u")
 	if err == nil || err == ErrRateLimited || err == ErrNetwork {
 		t.Fatalf("want generic error got %v", err)
+	}
+}
+
+func TestListReposPagination(t *testing.T) {
+	page := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page++
+		if page == 1 {
+			w.Header().Set("Link", `<http://`+r.Host+`/users/u/repos?page=2>; rel="next"`)
+			w.Write([]byte(`[{"name":"a","stargazers_count":1},{"name":"b","stargazers_count":2}]`))
+		} else {
+			w.Write([]byte(`[{"name":"c","stargazers_count":3}]`))
+		}
+	}))
+	defer srv.Close()
+	c := NewClient("", srv.URL)
+	repos, err := c.ListRepos(context.Background(), "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 3 {
+		t.Fatalf("want 3 paginated repos got %d %+v", len(repos), repos)
+	}
+	if repos[2].Name != "c" {
+		t.Fatalf("want c last got %+v", repos[2])
+	}
+}
+
+func TestListReposInvalidUser(t *testing.T) {
+	// use mock server that would succeed if not validated
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"name":"a","stargazers_count":1}]`))
+	}))
+	defer srv.Close()
+	c := NewClient("", srv.URL)
+	_, err := c.ListRepos(context.Background(), "bad/user")
+	if err == nil {
+		t.Fatal("want error for invalid user with slash")
+	}
+	_, err = c.ListRepos(context.Background(), "")
+	if err == nil {
+		t.Fatal("want error for empty user")
+	}
+	_, err = c.ListRepos(context.Background(), "a-very-long-username-that-exceeds-thirty-nine-chars-limit-xyz")
+	if err == nil {
+		t.Fatal("want error for too long user")
+	}
+}
+
+func TestRateLimit429(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		w.Write([]byte(`{"message":"rate limit"}`))
+	}))
+	defer srv.Close()
+	c := NewClient("tok", srv.URL)
+	_, err := c.ListRepos(context.Background(), "u")
+	if err != ErrRateLimited {
+		t.Fatalf("want ErrRateLimited for 429 got %v", err)
+	}
+}
+
+func TestListReposContextTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	c := NewClient("tok", srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err := c.ListRepos(ctx, "u")
+	if err == nil {
+		t.Fatal("want timeout error")
+	}
+	if err != ErrNetwork {
+		t.Fatalf("want ErrNetwork for timeout got %v", err)
 	}
 }
