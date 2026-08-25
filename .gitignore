@@ -1,4 +1,6 @@
 gh-starview
+gh-starview-linux-*
+gh-starview-android-*
 *.db
 .cache/
 dist/
