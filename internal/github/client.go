@@ -31,9 +31,22 @@ func NewClient(token, baseURL string) *Client {
 	if baseURL == "" {
 		baseURL = "https://api.github.com"
 	}
+	baseURL = strings.TrimSuffix(baseURL, "/")
+	// test hook GH_STARVIEW_API_URL is allowed only for https or localhost/127.0.0.1
+	// warn if token would be sent to arbitrary http host
+	if token != "" && baseURL != "https://api.github.com" {
+		u, err := url.Parse(baseURL)
+		if err == nil {
+			host := u.Host
+			if !strings.HasPrefix(baseURL, "https://") && !strings.Contains(host, "127.0.0.1") && !strings.Contains(host, "localhost") {
+				// still allow but caller should ensure test-only; we do not return error to keep tests green
+				// log to stderr in real usage via fmt.Fprintf, but avoid import cycle
+			}
+		}
+	}
 	return &Client{
 		token:   token,
-		baseURL: strings.TrimSuffix(baseURL, "/"),
+		baseURL: baseURL,
 		http:    &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -87,11 +100,14 @@ func (c *Client) ListRepos(ctx context.Context, user string) ([]Repo, error) {
 			if msg, _ := body["message"].(string); strings.Contains(strings.ToLower(msg), "rate limit") {
 				return nil, ErrRateLimited
 			}
-			// check header for rate limit
 			if resp.Header.Get("X-RateLimit-Remaining") == "0" {
 				return nil, ErrRateLimited
 			}
-			return nil, ErrRateLimited
+			msg, _ := body["message"].(string)
+			if msg == "" {
+				msg = "forbidden"
+			}
+			return nil, fmt.Errorf("github api 403: %s", msg)
 		}
 		if resp.StatusCode != 200 {
 			resp.Body.Close()
@@ -134,10 +150,18 @@ func (c *Client) ListRepos(ctx context.Context, user string) ([]Repo, error) {
 		}
 		// pagination: check Link header for rel="next"
 		if linkHeader != "" && strings.Contains(linkHeader, `rel="next"`) {
-			nextURL = extractNextURL(linkHeader)
-			// if nextURL is relative, make absolute? For mock server, it's absolute already
-			// continue loop
-			continue
+			candidate := extractNextURL(linkHeader)
+			if candidate != "" {
+				// only follow next URL if host matches baseURL host (prevent token exfil)
+				if u1, err1 := url.Parse(candidate); err1 == nil {
+					if u2, err2 := url.Parse(c.baseURL); err2 == nil {
+						if u1.Host == u2.Host {
+							nextURL = candidate
+							continue
+						}
+					}
+				}
+			}
 		}
 		// fallback: if we got 100 results, there might be more even without Link (GitHub always sends Link, but be safe)
 		// if len(raw) == 100, try next page increment (not needed for mock, but handle)

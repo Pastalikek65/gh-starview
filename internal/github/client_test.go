@@ -141,6 +141,52 @@ func TestRateLimit429(t *testing.T) {
 	}
 }
 
+func Test403NonRateLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		w.Write([]byte(`{"message":"Resource not accessible by integration"}`))
+	}))
+	defer srv.Close()
+	c := NewClient("tok", srv.URL)
+	_, err := c.ListRepos(context.Background(), "u")
+	if err == nil || err == ErrRateLimited || err == ErrNetwork {
+		t.Fatalf("want generic 403 error, got %v", err)
+	}
+	if !contains(err.Error(), "403") {
+		t.Fatalf("want 403 in error, got %v", err)
+	}
+}
+
+func TestLinkHostValidation(t *testing.T) {
+	// Link with evil host should not be followed (token exfil prevention)
+	page := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page++
+		if page == 1 {
+			w.Header().Set("Link", `<http://evil.com/users/u/repos?page=2>; rel="next"`)
+			w.Write([]byte(`[{"name":"a","stargazers_count":1}]`))
+		} else {
+			t.Fatal("should not follow evil host")
+		}
+	}))
+	defer srv.Close()
+	c := NewClient("tok", srv.URL)
+	repos, err := c.ListRepos(context.Background(), "u")
+	if err != nil { t.Fatal(err) }
+	if len(repos) != 1 {
+		t.Fatalf("want 1, got %d", len(repos))
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 func TestListReposContextTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(50 * time.Millisecond)
