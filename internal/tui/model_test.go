@@ -116,6 +116,20 @@ func TestFilterCancel(t *testing.T) {
 	}
 }
 
+func TestFilterCancelCtrlC(t *testing.T) {
+	repos := []cache.Repo{{Name: "foo"}, {Name: "bar"}}
+	m := NewModel(repos)
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = newM.(Model)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = newM.(Model)
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = newM.(Model)
+	if m.IsFiltering() {
+		t.Fatal("ctrl+c should cancel filtering")
+	}
+}
+
 func TestNavigationAndSortKeys(t *testing.T) {
 	repos := []cache.Repo{{Name: "b", Stars: 5}, {Name: "a", Stars: 10}, {Name: "c", Stars: 1}}
 	m := NewModel(repos)
