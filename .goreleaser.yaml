@@ -6,6 +6,7 @@ before:
     - go mod tidy
     - go vet ./...
     - go test ./... -count=1 -timeout 30s
+    - govulncheck ./... || true
 
 builds:
   - id: gh-starview

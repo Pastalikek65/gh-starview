@@ -3,6 +3,7 @@ package cache
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -29,8 +30,15 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+		db.Close()
 		return nil, err
 	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// ensure file is 0600 (dir is 0700 from config.EnsureCacheDir)
+	_ = os.Chmod(path, 0600)
 	// check existing schema and migrate non-destructively if needed (old PK was name)
 	var sqlText string
 	err = db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='repos'`).Scan(&sqlText)

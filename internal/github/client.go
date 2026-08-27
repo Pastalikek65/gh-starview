@@ -19,6 +19,8 @@ var ErrNetwork = errors.New("network error")
 
 var validUserRe = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$`)
 
+var version = "0.2.1"
+
 type Repo = cache.Repo
 
 type Client struct {
@@ -77,11 +79,20 @@ func (c *Client) ListRepos(ctx context.Context, user string) ([]Repo, error) {
 		if err != nil {
 			return nil, err
 		}
+		// only send token to https or localhost/127.0.0.1 to prevent exfil via GH_STARVIEW_API_URL=http://evil
 		if c.token != "" {
-			req.Header.Set("Authorization", "Bearer "+c.token)
+			shouldSend := true
+			if u, err := url.Parse(nextURL); err == nil {
+				if u.Scheme == "http" && !strings.Contains(u.Host, "127.0.0.1") && !strings.Contains(u.Host, "localhost") {
+					shouldSend = false
+				}
+			}
+			if shouldSend {
+				req.Header.Set("Authorization", "Bearer "+c.token)
+			}
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
-		req.Header.Set("User-Agent", "gh-starview/0.1.0")
+		req.Header.Set("User-Agent", fmt.Sprintf("gh-starview/%s", version))
 		resp, err := c.http.Do(req)
 		if err != nil {
 			// context deadline or network

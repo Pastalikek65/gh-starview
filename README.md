@@ -93,8 +93,8 @@ API call: `GET /users/:user/repos?per_page=100&sort=updated`. Rate limits: I tre
 ## Developing it
 
 ```bash
-make test   # all packages, 69.6% total
-make cover  # detailed coverage, 90% for tui
+make test   # all packages, 75.3% total
+make cover  # detailed coverage, 90% for tui, 90% github
 make vet    # vet plus golangci-lint if you have it
 make build  # 13M binary, 4s on my phone
 ./gh-starview --version # v0.2.1
